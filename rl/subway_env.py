@@ -6,7 +6,12 @@ from controller.game_controller import GameController
 from vision.state_detector import StateDetector
 
 
-class SubwayEnv:
+import gymnasium as gym
+from gymnasium import spaces
+import numpy as np
+
+from rl.observation import ObservationProcessor
+class SubwayEnv(gym.Env):
 
     def __init__(self):
 
@@ -14,6 +19,17 @@ class SubwayEnv:
         self.actions = SubwayActions()
         self.controller = GameController()
         self.detector = StateDetector()
+
+        self.action_space = spaces.Discrete(5)
+
+        self.observation_space = spaces.Box(
+            low=0,
+            high=255,
+            shape=(128, 128, 1),
+            dtype=np.uint8,
+        )
+
+        self.processor = ObservationProcessor()
 
     def reset(self):
 
@@ -45,7 +61,9 @@ class SubwayEnv:
 
             elif state == "RUNNING":
 
-                return frame
+                obs = self.processor.process(frame)
+
+                return obs, {}
 
             time.sleep(0.05)
 
@@ -75,7 +93,19 @@ class SubwayEnv:
                     "state": state,
                 }
 
-                return frame, reward, done, info
+                terminated = done
+                truncated = False
+
+                obs = self.processor.process(frame)
+
+                return (
+                    obs,
+                    reward,
+                    terminated,
+                    truncated,
+                    info,
+                )
+
 
             # -----------------------------
             # Revive popup
@@ -103,7 +133,18 @@ class SubwayEnv:
                     "state": state,
                 }
 
-                return frame, reward, done, info
+                terminated = done
+                truncated = False
+
+                obs = self.processor.process(frame)
+
+                return (
+                    obs,
+                    reward,
+                    terminated,
+                    truncated,
+                    info,
+                )
 
             # -----------------------------
             # Unexpected state
@@ -111,3 +152,7 @@ class SubwayEnv:
             else:
 
                 time.sleep(0.05)
+
+
+    def close(self):
+        pass
