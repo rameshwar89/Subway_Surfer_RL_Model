@@ -1,0 +1,12 @@
+{
+    "center_x": 540,
+    "center_y": 1200,
+
+    "left_x": 250,
+    "right_x": 830,
+
+    "jump_y": 700,
+    "roll_y": 1700,
+
+    "swipe_duration": 60
+}

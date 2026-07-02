@@ -1,0 +1,9 @@
+opencv-python
+numpy
+mss
+adbutils
+pyautogui
+pydirectinput
+matplotlib
+gymnasium
+
