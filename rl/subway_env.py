@@ -27,6 +27,22 @@ class SubwayEnv(gym.Env):
         self.processor = ObservationProcessor()
         self.reward_system = RewardSystem()
 
+        # --------------------------
+# Performance Profiling
+# --------------------------
+
+        self.profile = {
+            "action": 0.0,
+            "sleep": 0.0,
+            "capture": 0.0,
+            "detect": 0.0,
+            "process": 0.0,
+            "reward": 0.0,
+            "total": 0.0,
+        }
+
+        self.profile_steps = 0
+
         # Last 4 processed frames
         self.frame_stack = deque(maxlen=4)
 
@@ -121,37 +137,97 @@ class SubwayEnv(gym.Env):
 
     def step(self, action):
 
-        # Execute action
-        self.actions.execute(action)
+        step_start = time.perf_counter()
 
+        # ---------------------------------
+        # Execute Action
+        # ---------------------------------
+
+        t = time.perf_counter()
+        self.actions.execute(action)
+        self.profile["action"] += time.perf_counter() - t
+
+        # ---------------------------------
+        # Wait for game to react
+        # ---------------------------------
+
+        t = time.perf_counter()
         time.sleep(0.08)
+        self.profile["sleep"] += time.perf_counter() - t
 
         while True:
 
+            # ---------------------------------
+            # Capture Screen
+            # ---------------------------------
+
+            t = time.perf_counter()
             frame = self.capture.grab()
+            self.profile["capture"] += time.perf_counter() - t
 
+            # ---------------------------------
+            # Detect Game State
+            # ---------------------------------
+
+            t = time.perf_counter()
             state, _, _ = self.detector.detect(frame)
+            self.profile["detect"] += time.perf_counter() - t
 
-            print(f"[STEP] State = {state}")
+            # print(f"[STEP] State = {state}")
 
             # -----------------------------
             # Continue Episode
             # -----------------------------
             if state == "RUNNING":
 
+                # Reward
+                t = time.perf_counter()
                 reward = self.reward_system.compute(state)
+                self.profile["reward"] += time.perf_counter() - t
+
+                # Observation Processing
+                t = time.perf_counter()
+                stacked = self._update_observation(frame)
+                self.profile["process"] += time.perf_counter() - t
 
                 info = {
                     "state": state,
                 }
 
-                stacked = self._update_observation(frame)
+                self.profile["total"] += time.perf_counter() - step_start
+                self.profile_steps += 1
+
+                if self.profile_steps == 100:
+
+                    print("\n========== ENV PROFILE (100 Steps) ==========")
+                    print(f"Action Execute : {(self.profile['action']/100)*1000:.2f} ms")
+                    print(f"Sleep          : {(self.profile['sleep']/100)*1000:.2f} ms")
+                    print(f"Screen Capture : {(self.profile['capture']/100)*1000:.2f} ms")
+                    print(f"State Detect   : {(self.profile['detect']/100)*1000:.2f} ms")
+                    print(f"Preprocess     : {(self.profile['process']/100)*1000:.2f} ms")
+                    print(f"Reward         : {(self.profile['reward']/100)*1000:.2f} ms")
+                    print("---------------------------------------------")
+                    print(f"Total Step     : {(self.profile['total']/100)*1000:.2f} ms")
+                    print(f"Steps / Second : {100/self.profile['total']:.2f}")
+                    print("=============================================\n")
+
+                    self.profile = {
+                        "action": 0.0,
+                        "sleep": 0.0,
+                        "capture": 0.0,
+                        "detect": 0.0,
+                        "process": 0.0,
+                        "reward": 0.0,
+                        "total": 0.0,
+                    }
+
+                    self.profile_steps = 0
 
                 return (
                     stacked,
                     reward,
-                    False,      # terminated
-                    False,      # truncated
+                    False,
+                    False,
                     info,
                 )
 
@@ -173,19 +249,52 @@ class SubwayEnv(gym.Env):
             # -----------------------------
             elif state == "GAME_OVER":
 
+                t = time.perf_counter()
                 reward = self.reward_system.compute(state)
+                self.profile["reward"] += time.perf_counter() - t
+
+                t = time.perf_counter()
+                stacked = self._update_observation(frame)
+                self.profile["process"] += time.perf_counter() - t
 
                 info = {
                     "state": state,
                 }
 
-                stacked = self._update_observation(frame)
+                self.profile["total"] += time.perf_counter() - step_start
+                self.profile_steps += 1
+
+                if self.profile_steps == 100:
+
+                    print("\n========== ENV PROFILE (100 Steps) ==========")
+                    print(f"Action Execute : {(self.profile['action']/100)*1000:.2f} ms")
+                    print(f"Sleep          : {(self.profile['sleep']/100)*1000:.2f} ms")
+                    print(f"Screen Capture : {(self.profile['capture']/100)*1000:.2f} ms")
+                    print(f"State Detect   : {(self.profile['detect']/100)*1000:.2f} ms")
+                    print(f"Preprocess     : {(self.profile['process']/100)*1000:.2f} ms")
+                    print(f"Reward         : {(self.profile['reward']/100)*1000:.2f} ms")
+                    print("---------------------------------------------")
+                    print(f"Total Step     : {(self.profile['total']/100)*1000:.2f} ms")
+                    print(f"Steps / Second : {100/self.profile['total']:.2f}")
+                    print("=============================================\n")
+
+                    self.profile = {
+                        "action": 0.0,
+                        "sleep": 0.0,
+                        "capture": 0.0,
+                        "detect": 0.0,
+                        "process": 0.0,
+                        "reward": 0.0,
+                        "total": 0.0,
+                    }
+
+                    self.profile_steps = 0
 
                 return (
                     stacked,
                     reward,
-                    True,       # terminated
-                    False,      # truncated
+                    True,
+                    False,
                     info,
                 )
 
@@ -193,9 +302,9 @@ class SubwayEnv(gym.Env):
             # Unknown State
             # -----------------------------
             else:
-
+                t = time.perf_counter()
                 time.sleep(0.05)
-
+                self.profile["sleep"] += time.perf_counter() - t
     def close(self):
 
         pass
