@@ -11,6 +11,12 @@ obs = processor.process(frame)
 print("Original:", frame.shape)
 print("Processed:", obs.shape)
 
-cv2.imshow("Processed", obs)
+debug = cv2.resize(
+    obs,
+    (512, 512),
+    interpolation=cv2.INTER_NEAREST,
+)
+
+cv2.imshow("Processed", debug)
 cv2.waitKey(0)
 cv2.destroyAllWindows()

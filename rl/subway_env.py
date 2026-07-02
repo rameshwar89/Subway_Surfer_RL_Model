@@ -1,37 +1,73 @@
 import time
+from collections import deque
+
+import gymnasium as gym
+import numpy as np
+from gymnasium import spaces
 
 from android.capture import ScreenCapture
 from controller.actions import SubwayActions
 from controller.game_controller import GameController
+from rl.observation import ObservationProcessor
+from rl.reward import RewardSystem
 from vision.state_detector import StateDetector
 
 
-import gymnasium as gym
-from gymnasium import spaces
-import numpy as np
-
-from rl.observation import ObservationProcessor
 class SubwayEnv(gym.Env):
 
     def __init__(self):
+
+        super().__init__()
 
         self.capture = ScreenCapture()
         self.actions = SubwayActions()
         self.controller = GameController()
         self.detector = StateDetector()
 
+        self.processor = ObservationProcessor()
+        self.reward_system = RewardSystem()
+
+        # Last 4 processed frames
+        self.frame_stack = deque(maxlen=4)
+
+        # RL Spaces
         self.action_space = spaces.Discrete(5)
 
         self.observation_space = spaces.Box(
             low=0,
             high=255,
-            shape=(128, 128, 1),
+            shape=(128, 128, 4),
             dtype=np.uint8,
         )
 
-        self.processor = ObservationProcessor()
+    # --------------------------------------------------
+    # Helpers
+    # --------------------------------------------------
 
-    def reset(self):
+    def _get_stacked_observation(self):
+
+        return np.concatenate(
+            list(self.frame_stack),
+            axis=-1,
+        )
+
+    def _update_observation(self, frame):
+
+        obs = self.processor.process(frame)
+
+        self.frame_stack.append(obs)
+
+        return self._get_stacked_observation()
+
+    # --------------------------------------------------
+    # Gym API
+    # --------------------------------------------------
+
+    def reset(self, seed=None, options=None):
+
+        super().reset(seed=seed)
+
+        self.frame_stack.clear()
 
         print("\n========== RESET ==========")
 
@@ -42,6 +78,8 @@ class SubwayEnv(gym.Env):
             frame = self.capture.grab()
 
             state, _, _ = self.detector.detect(frame)
+
+            print("RESET STATE:", state)
 
             if state == "GAME_OVER":
 
@@ -59,11 +97,25 @@ class SubwayEnv(gym.Env):
 
                 continue
 
+            elif state == "USE_KEYS":
+
+                print("USE_KEYS detected -> Closing popup")
+
+                self.controller.close_use_keys()
+
+                time.sleep(0.5)
+
+                continue
+
             elif state == "RUNNING":
 
                 obs = self.processor.process(frame)
 
-                return obs, {}
+                # Fill stack with first observation
+                for _ in range(4):
+                    self.frame_stack.append(obs)
+
+                return self._get_stacked_observation(), {}
 
             time.sleep(0.05)
 
@@ -80,35 +132,31 @@ class SubwayEnv(gym.Env):
 
             state, _, _ = self.detector.detect(frame)
 
+            print(f"[STEP] State = {state}")
+
             # -----------------------------
-            # Normal gameplay
+            # Continue Episode
             # -----------------------------
             if state == "RUNNING":
 
-                reward = 1
-
-                done = False
+                reward = self.reward_system.compute(state)
 
                 info = {
                     "state": state,
                 }
 
-                terminated = done
-                truncated = False
-
-                obs = self.processor.process(frame)
+                stacked = self._update_observation(frame)
 
                 return (
-                    obs,
+                    stacked,
                     reward,
-                    terminated,
-                    truncated,
+                    False,      # terminated
+                    False,      # truncated
                     info,
                 )
 
-
             # -----------------------------
-            # Revive popup
+            # Revive Popup
             # -----------------------------
             elif state == "USE_KEYS":
 
@@ -121,38 +169,33 @@ class SubwayEnv(gym.Env):
                 continue
 
             # -----------------------------
-            # Episode finished
+            # Episode End
             # -----------------------------
             elif state == "GAME_OVER":
 
-                reward = -100
-
-                done = True
+                reward = self.reward_system.compute(state)
 
                 info = {
                     "state": state,
                 }
 
-                terminated = done
-                truncated = False
-
-                obs = self.processor.process(frame)
+                stacked = self._update_observation(frame)
 
                 return (
-                    obs,
+                    stacked,
                     reward,
-                    terminated,
-                    truncated,
+                    True,       # terminated
+                    False,      # truncated
                     info,
                 )
 
             # -----------------------------
-            # Unexpected state
+            # Unknown State
             # -----------------------------
             else:
 
                 time.sleep(0.05)
 
-
     def close(self):
+
         pass

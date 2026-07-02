@@ -1,7 +1,6 @@
 import cv2
 import numpy as np
 
-
 class ObservationProcessor:
 
     def __init__(self):
