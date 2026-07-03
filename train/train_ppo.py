@@ -15,7 +15,8 @@ from stable_baselines3.common.monitor import Monitor
 
 Path("models").mkdir(exist_ok=True)
 Path("logs").mkdir(exist_ok=True)
-
+Path("best_model").mkdir(exist_ok=True)
+Path("eval_logs").mkdir(exist_ok=True)
 
 # --------------------------------------------------
 # Environment
@@ -38,32 +39,38 @@ print(f"\nUsing device: {device}")
 if device == "cuda":
     print(torch.cuda.get_device_name(0))
 
-
 # --------------------------------------------------
 # PPO
 # --------------------------------------------------
 
-model = PPO(
-    policy="CnnPolicy",
+best_model = Path("best_model/best_model.zip")
 
-    env=env,
+if best_model.exists():
 
-    device=device,
+    print("\nLoading Best Model...")
 
-    verbose=1,
+    model = PPO.load(
+        best_model,
+        env=env,
+        device=device,
+    )
 
-    learning_rate=3e-4,
+else:
 
-    gamma=0.99,
+    print("\nCreating New Model...")
 
-    n_steps=64,
-
-    batch_size=64,
-
-    n_epochs=10,
-
-    tensorboard_log="logs",
-)
+    model = PPO(
+        policy="CnnPolicy",
+        env=env,
+        device=device,
+        verbose=1,
+        learning_rate=3e-4,
+        gamma=0.99,
+        n_steps=64,
+        batch_size=64,
+        n_epochs=10,
+        tensorboard_log="logs",
+    )
 
 
 # --------------------------------------------------
@@ -71,9 +78,9 @@ model = PPO(
 # --------------------------------------------------
 
 model.learn(
-    total_timesteps=500,
+    total_timesteps=5000,
     callback=get_callbacks(),
-    tb_log_name="SubwayPPO",
+    tb_log_name="SubwayPPO_17",
 )
 
 

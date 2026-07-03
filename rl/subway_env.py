@@ -12,7 +12,7 @@ from rl.observation import ObservationProcessor
 from rl.reward import RewardSystem
 from vision.state_detector import StateDetector
 
-
+PROFILE_ENV = False
 class SubwayEnv(gym.Env):
 
     def __init__(self):
@@ -26,10 +26,11 @@ class SubwayEnv(gym.Env):
 
         self.processor = ObservationProcessor()
         self.reward_system = RewardSystem()
+        self.startup_steps = 0
 
         # --------------------------
-# Performance Profiling
-# --------------------------
+        # Performance Profiling
+        # --------------------------
 
         self.profile = {
             "action": 0.0,
@@ -85,8 +86,6 @@ class SubwayEnv(gym.Env):
 
         self.frame_stack.clear()
 
-        print("\n========== RESET ==========")
-
         self.controller.tap_play()
 
         while True:
@@ -94,8 +93,6 @@ class SubwayEnv(gym.Env):
             frame = self.capture.grab()
 
             state, _, _ = self.detector.detect(frame)
-
-            print("RESET STATE:", state)
 
             if state == "GAME_OVER":
 
@@ -115,8 +112,6 @@ class SubwayEnv(gym.Env):
 
             elif state == "USE_KEYS":
 
-                print("USE_KEYS detected -> Closing popup")
-
                 self.controller.close_use_keys()
 
                 time.sleep(0.5)
@@ -125,17 +120,40 @@ class SubwayEnv(gym.Env):
 
             elif state == "RUNNING":
 
-                obs = self.processor.process(frame)
+                # --------------------------------------------------
+                # Warm-up after entering gameplay
+                #
+                # Instead of stacking the exact same frame 4 times,
+                # wait for a few fresh gameplay frames so the agent
+                # starts from a stable running state.
+                # --------------------------------------------------
 
-                # Fill stack with first observation
+                self.frame_stack.clear()
+
                 for _ in range(4):
+
+                    time.sleep(0.05)
+
+                    frame = self.capture.grab()
+
+                    obs = self.processor.process(frame)
+
                     self.frame_stack.append(obs)
 
+                self.startup_steps = 3
                 return self._get_stacked_observation(), {}
-
             time.sleep(0.05)
 
     def step(self, action):
+        # ---------------------------------
+        # Startup warm-up
+        # Ignore the first few PPO actions
+        # after every reset.
+        # ---------------------------------
+
+        if self.startup_steps > 0:
+            action = SubwayActions.IDLE
+            self.startup_steps -= 1
 
         step_start = time.perf_counter()
 
@@ -192,12 +210,13 @@ class SubwayEnv(gym.Env):
 
                 info = {
                     "state": state,
+                    "step_time": time.perf_counter() - step_start,
                 }
 
                 self.profile["total"] += time.perf_counter() - step_start
                 self.profile_steps += 1
 
-                if self.profile_steps == 100:
+                if PROFILE_ENV and self.profile_steps == 100:
 
                     print("\n========== ENV PROFILE (100 Steps) ==========")
                     print(f"Action Execute : {(self.profile['action']/100)*1000:.2f} ms")
@@ -236,8 +255,6 @@ class SubwayEnv(gym.Env):
             # -----------------------------
             elif state == "USE_KEYS":
 
-                print("USE_KEYS detected -> Closing popup")
-
                 self.controller.close_use_keys()
 
                 time.sleep(0.5)
@@ -259,12 +276,13 @@ class SubwayEnv(gym.Env):
 
                 info = {
                     "state": state,
+                    "step_time": time.perf_counter() - step_start,
                 }
 
                 self.profile["total"] += time.perf_counter() - step_start
                 self.profile_steps += 1
 
-                if self.profile_steps == 100:
+                if PROFILE_ENV and self.profile_steps == 100:
 
                     print("\n========== ENV PROFILE (100 Steps) ==========")
                     print(f"Action Execute : {(self.profile['action']/100)*1000:.2f} ms")
@@ -305,6 +323,7 @@ class SubwayEnv(gym.Env):
                 t = time.perf_counter()
                 time.sleep(0.05)
                 self.profile["sleep"] += time.perf_counter() - t
+    
     def close(self):
 
         pass
