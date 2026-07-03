@@ -9,7 +9,7 @@ from train.stats_callback import SubwayStatsCallback
 def get_callbacks():
 
     checkpoint_callback = CheckpointCallback(
-        save_freq=200,
+        save_freq=1000,          # was 200
         save_path="models/",
         name_prefix="latest_model",
         save_replay_buffer=False,

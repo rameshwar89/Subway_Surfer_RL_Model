@@ -1,0 +1,9 @@
+{
+    "survival_reward": 0.10,
+    "death_penalty": -10.0,
+
+    "milestone_interval": 50,
+    "milestone_bonus": 1.0,
+
+    "spam_penalty": 0.0
+}

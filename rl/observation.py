@@ -5,48 +5,82 @@ import numpy as np
 
 
 class ObservationProcessor:
+    """
+    Handles all observation preprocessing for PPO.
+
+    Pipeline:
+        Full Screenshot
+            ↓
+        Crop Gameplay
+            ↓
+        Grayscale
+            ↓
+        Resize
+            ↓
+        Normalize
+            ↓
+        (H, W, 1)
+    """
 
     def __init__(self):
-
-        self.width = 128
-        self.height = 128
 
         with open("configs/observation.json", "r") as f:
             cfg = json.load(f)
 
+        # Crop ROI
         self.crop_x = cfg["crop_x"]
         self.crop_y = cfg["crop_y"]
         self.crop_w = cfg["crop_width"]
         self.crop_h = cfg["crop_height"]
 
-    def process(self, frame):
+        # Output resolution
+        self.width = cfg.get("resize_width", 128)
+        self.height = cfg.get("resize_height", 128)
 
-        # -----------------------------
-        # Crop gameplay
-        # -----------------------------
-        frame = frame[
-            self.crop_y:self.crop_y + self.crop_h,
-            self.crop_x:self.crop_x + self.crop_w,
-        ]
+    def crop(self, frame):
+        """Crop gameplay region."""
 
-        # -----------------------------
-        # Convert to grayscale
-        # -----------------------------
-        gray = cv2.cvtColor(
+        h, w = frame.shape[:2]
+
+        x1 = max(0, self.crop_x)
+        y1 = max(0, self.crop_y)
+        x2 = min(w, self.crop_x + self.crop_w)
+        y2 = min(h, self.crop_y + self.crop_h)
+
+        return frame[y1:y2, x1:x2]
+
+    def grayscale(self, frame):
+        """Convert RGB/BGR image to grayscale."""
+
+        return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+    def resize(self, frame):
+        """Resize observation."""
+
+        return cv2.resize(
             frame,
-            cv2.COLOR_BGR2GRAY,
-        )
-
-        # -----------------------------
-        # Resize
-        # -----------------------------
-        obs = cv2.resize(
-            gray,
             (self.width, self.height),
             interpolation=cv2.INTER_AREA,
         )
 
-        # -----------------------------
-        # Add channel dimension
-        # -----------------------------
-        return np.expand_dims(obs, axis=-1)
+    def normalize(self, frame):
+        """Normalize pixels to [0,1]."""
+
+        return frame.astype(np.float32) / 255.0
+
+    def process(self, frame):
+
+        frame = self.crop(frame)
+        frame = self.grayscale(frame)
+        frame = self.resize(frame)
+        frame = self.normalize(frame)
+
+        return np.expand_dims(frame, axis=-1)
+
+    @property
+    def observation_shape(self):
+        return (self.height, self.width, 1)
+
+    @property
+    def observation_dtype(self):
+        return np.float32

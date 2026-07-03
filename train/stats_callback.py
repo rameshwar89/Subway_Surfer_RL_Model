@@ -15,10 +15,20 @@ class SubwayStatsCallback(BaseCallback):
         self.best_score = -1e9
 
         self.game_overs = 0
+        self.total_steps = 0
+
+        # Action distribution
+        self.action_counter = {
+            0: 0,  # Idle
+            1: 0,  # Left
+            2: 0,  # Right
+            3: 0,  # Jump
+            4: 0,  # Roll
+        }
 
         Path("best_model").mkdir(exist_ok=True)
 
-    def _save_best(self, score, ep_reward, ep_len):
+    def _save_best(self, selection_metric, ep_reward, ep_len):
 
         tmp_path = "best_model/_tmp_best"
 
@@ -31,12 +41,14 @@ class SubwayStatsCallback(BaseCallback):
 
         print(
             f"\n⭐ Best Model Updated | "
-            f"Score: {score:.2f} | "
+            f"Metric: {selection_metric:.2f} | "
             f"Reward: {ep_reward:.2f} | "
             f"Length: {ep_len}"
         )
 
     def _on_step(self):
+
+        self.total_steps += 1
 
         infos = self.locals["infos"]
 
@@ -45,26 +57,27 @@ class SubwayStatsCallback(BaseCallback):
 
         info = infos[0]
 
-        # ----------------------------------
-        # Episode finished
-        # ----------------------------------
+        # -------------------------------------------------
+        # Episode statistics
+        # -------------------------------------------------
 
         if "episode" in info:
 
             ep_len = info["episode"]["l"]
             ep_reward = info["episode"]["r"]
 
-            # Combined score
-            score = ep_reward
+            # For now reward is our selection metric.
+            # Later this can become real Subway Surfers score.
+            selection_metric = ep_reward
 
-            if score > self.best_score:
+            if selection_metric > self.best_score:
 
-                self.best_score = score
+                self.best_score = selection_metric
                 self.best_episode = ep_len
                 self.best_reward = ep_reward
 
                 self._save_best(
-                    score,
+                    selection_metric,
                     ep_reward,
                     ep_len,
                 )
@@ -94,29 +107,88 @@ class SubwayStatsCallback(BaseCallback):
                 self.best_score,
             )
 
-        # ----------------------------------
+        # -------------------------------------------------
         # Performance
-        # ----------------------------------
+        # -------------------------------------------------
 
         if "step_time" in info:
 
+            step_time = info["step_time"]
+
             self.logger.record(
                 "performance/step_time_ms",
-                info["step_time"] * 1000,
+                step_time * 1000,
+            )
+
+            if step_time > 0:
+
+                self.logger.record(
+                    "performance/steps_per_second",
+                    1 / step_time,
+                )
+
+        # -------------------------------------------------
+        # Action distribution
+        # -------------------------------------------------
+
+        action = info.get("action")
+
+        if action is not None:
+
+            self.action_counter[action] += 1
+
+        total_actions = sum(self.action_counter.values())
+
+        if total_actions > 0:
+
+            self.logger.record(
+                "policy/idle",
+                self.action_counter[0] / total_actions,
             )
 
             self.logger.record(
-                "performance/steps_per_second",
-                1 / info["step_time"],
+                "policy/left",
+                self.action_counter[1] / total_actions,
             )
 
-        # ----------------------------------
-        # Game Overs
-        # ----------------------------------
+            self.logger.record(
+                "policy/right",
+                self.action_counter[2] / total_actions,
+            )
+
+            self.logger.record(
+                "policy/jump",
+                self.action_counter[3] / total_actions,
+            )
+
+            self.logger.record(
+                "policy/roll",
+                self.action_counter[4] / total_actions,
+            )
+
+        # -------------------------------------------------
+        # Reward breakdown (future-ready)
+        # -------------------------------------------------
+
+        reward_breakdown = info.get("reward_breakdown")
+
+        if reward_breakdown:
+
+            for key, value in reward_breakdown.items():
+
+                self.logger.record(
+                    f"reward/{key}",
+                    value,
+                )
+
+        # -------------------------------------------------
+        # Environment state
+        # -------------------------------------------------
 
         state = info.get("state")
 
         if state == "GAME_OVER":
+
             self.game_overs += 1
 
         self.logger.record(
