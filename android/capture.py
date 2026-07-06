@@ -1,23 +1,13 @@
-import subprocess
-
-import cv2
-import numpy as np
+from .transport import get_transport
 
 
 class ScreenCapture:
 
+    def __init__(self):
+        self.transport = get_transport()
+
     def grab(self):
+        return self.transport.get_frame()
 
-        process = subprocess.Popen(
-            ["adb", "exec-out", "screencap", "-p"],
-            stdout=subprocess.PIPE,
-        )
-
-        image_bytes = process.stdout.read()
-
-        image = cv2.imdecode(
-            np.frombuffer(image_bytes, np.uint8),
-            cv2.IMREAD_COLOR,
-        )
-
-        return image
+    def close(self):
+        pass

@@ -1,54 +1,19 @@
-import json
+from controller.actions import SubwayActions
 import time
 
-from android.gestures import Gestures
-
-
-with open("configs/calibration.json") as f:
-    cfg = json.load(f)
-
-g = Gestures()
-
-time.sleep(2)
+a = SubwayActions()
 
 print("LEFT")
-g.swipe(
-    cfg["center_x"],
-    cfg["center_y"],
-    cfg["left_x"],
-    cfg["center_y"],
-    cfg["swipe_duration"],
-)
-
-time.sleep(1)
+a.execute(0)
+time.sleep(2)
 
 print("RIGHT")
-g.swipe(
-    cfg["center_x"],
-    cfg["center_y"],
-    cfg["right_x"],
-    cfg["center_y"],
-    cfg["swipe_duration"],
-)
-
-time.sleep(1)
+a.execute(1)
+time.sleep(2)
 
 print("JUMP")
-g.swipe(
-    cfg["center_x"],
-    cfg["center_y"],
-    cfg["center_x"],
-    cfg["jump_y"],
-    cfg["swipe_duration"],
-)
-
-time.sleep(1)
+a.execute(2)
+time.sleep(2)
 
 print("ROLL")
-g.swipe(
-    cfg["center_x"],
-    cfg["center_y"],
-    cfg["center_x"],
-    cfg["roll_y"],
-    cfg["swipe_duration"],
-)
+a.execute(3)
