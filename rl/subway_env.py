@@ -16,7 +16,7 @@ from vision.live_observation import LiveObservationDebugger
 PROFILE_ENV = False
 DEBUG_OBSERVATION = True
 
-STEP_DELAY = 0.10
+STEP_DELAY = 0.08
 WARMUP_FRAMES = 4
 STARTUP_IGNORE_ACTIONS = 5
 PROFILE_INTERVAL = 100
@@ -44,7 +44,7 @@ class SubwayEnv(gym.Env):
         self.reward_system = RewardSystem()
         self.last_action_times = {}
         self.episode_steps = 0
-        self.action_history = deque(maxlen=12)
+        self.action_history = deque(maxlen=8)
 
         # ---------------------------------
         # Action Cooldowns (seconds).
@@ -250,9 +250,8 @@ class SubwayEnv(gym.Env):
 
         penalty = 0.0
         
-        # Weights for the last 12 actions (oldest to newest)
-        # Extending history window to 12 steps to capture earlier stumbles.
-        weights = [0.02, 0.03, 0.05, 0.05, 0.05, 0.05, 0.1, 0.1, 0.2, 0.15, 0.1, 0.1]
+        # Weights for the last 8 actions (oldest to newest)
+        weights = [0.20, 0.20, 0.20, 0.15, 0.10, 0.07, 0.05, 0.03]
         
         # Align weights with the actual number of actions in history (in case episode was short)
         active_weights = weights[-len(self.action_history):] if self.action_history else []

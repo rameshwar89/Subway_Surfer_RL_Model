@@ -26,10 +26,10 @@ TRAIN_FROM = "checkpoint"
 FINAL_MODEL_PATH = Path("models/subway_ppo_final.zip")
 BEST_MODEL_PATH = Path("best_model/best_model.zip")
 BEST_STATS_PATH = Path("best_model/best_stats.json")
-CHECKPOINT_MODEL_PATH = Path("models/experiments/Phase18_HumanLike_BestResume_30k_lr_3e-4_gamma_0.99_20260705_171658_complete_36043_20260705_183459.zip")
+CHECKPOINT_MODEL_PATH = Path("models/experiments/Phase18_Scratch_100k_SpeedRun_20260705_210711_complete_130304_20260705_231209.zip")
 
 RUN_TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
-EXPERIMENT_NAME = f"Phase21_HumanLike_Restart_{RUN_TIMESTAMP}"
+EXPERIMENT_NAME = "Phase21_SpeedRun_Resume_100k_20260706_233252_1"
 TOTAL_TIMESTEPS = 35000
 SB3_VERBOSE = 1
 
