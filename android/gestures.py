@@ -13,4 +13,5 @@ class Gestures:
             y1,
             x2,
             y2,
+            duration,
         )

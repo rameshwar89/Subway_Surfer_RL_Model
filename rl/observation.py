@@ -50,9 +50,11 @@ class ObservationProcessor:
         return frame[y1:y2, x1:x2]
 
     def grayscale(self, frame):
-        """Convert RGB/BGR image to grayscale."""
 
-        return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return cv2.cvtColor(
+            frame,
+            cv2.COLOR_BGR2GRAY,
+        )
 
     def resize(self, frame):
         """Resize observation."""
@@ -64,17 +66,17 @@ class ObservationProcessor:
         )
 
     def normalize(self, frame):
-        """Normalize pixels to [0,1]."""
-
-        return frame.astype(np.float32) / 255.0
+        """
+        Keep uint8 image.
+        Stable-Baselines3 will normalize internally.
+        """
+        return frame
 
     def process(self, frame):
 
         frame = self.crop(frame)
         frame = self.grayscale(frame)
         frame = self.resize(frame)
-        frame = self.normalize(frame)
-
         return np.expand_dims(frame, axis=-1)
 
     @property
@@ -83,4 +85,4 @@ class ObservationProcessor:
 
     @property
     def observation_dtype(self):
-        return np.float32
+        return np.uint8

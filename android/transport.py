@@ -84,6 +84,11 @@ class AndroidTransport:
             move_steps_delay,
         )
 
+    def tap(self, x, y):
+        self.client.control.touch(x, y, 0)
+        time.sleep(0.03)
+        self.client.control.touch(x, y, 1)
+
     def stop(self):
 
         self.client.stop()

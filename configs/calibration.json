@@ -1,21 +1,89 @@
 {
     "start_x": 307,
     "start_y": 1984,
-
     "center_x": 540,
     "center_y": 1200,
-
     "left_x": 250,
     "right_x": 830,
-
     "jump_y": 700,
     "roll_y": 1700,
-
     "swipe_duration": 60,
-
-    "play_x": 845,
-    "play_y": 2298,
-
-    "close_use_keys_x": 540,
-    "close_use_keys_y": 1752
+    "play_x": 825,
+    "play_y": 2285,
+    "close_use_keys_x": 825,
+    "close_use_keys_y": 2285,
+    "pause_x": 72,
+    "pause_y": 96,
+    "quit_x": 540,
+    "quit_y": 1740,
+    "leave_x": 540,
+    "leave_y": 1480,
+    "pause_menu_roi": {
+        "x": 0,
+        "y": 0,
+        "width": 1080,
+        "height": 2400
+    },
+    "leave_confirm_roi": {
+        "x": 0,
+        "y": 0,
+        "width": 1080,
+        "height": 2400
+    },
+    "state_detection": {
+        "thresholds": {
+            "popup": 0.9,
+            "game_over_ui": 0.9,
+            "main_menu": 0.9,
+            "pause_menu": 0.9,
+            "leave_confirm": 0.9,
+            "pause_button": 0.68
+        },
+        "min_votes": {
+            "popup": 1,
+            "game_over_ui": 1,
+            "main_menu": 2,
+            "pause_menu": 1,
+            "leave_confirm": 1,
+            "pause_button": 1
+        },
+        "rois": {
+            "pause_button": {
+                "x": 26,
+                "y": 160,
+                "width": 133,
+                "height": 136
+            },
+            "popup": {
+                "x": 0,
+                "y": 620,
+                "width": 1080,
+                "height": 1040
+            },
+            "game_over_ui": {
+                "x": 0,
+                "y": 1700,
+                "width": 1080,
+                "height": 700
+            },
+            "main_menu": {
+                "x": 0,
+                "y": 1750,
+                "width": 1080,
+                "height": 650
+            },
+            "pause_menu": {
+                "x": 0,
+                "y": 0,
+                "width": 1080,
+                "height": 2400
+            },
+            "leave_confirm": {
+                "x": 0,
+                "y": 0,
+                "width": 1080,
+                "height": 2400
+            }
+        }
+    }
 }
