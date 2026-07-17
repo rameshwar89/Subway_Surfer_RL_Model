@@ -10,7 +10,7 @@ class GameController:
 
         self.transport = get_transport()
 
-        with open("configs/calibration.json") as f:
+        with open("assets/configs/calibration.json") as f:
             self.cfg = json.load(f)
 
     def tap(self, x, y):

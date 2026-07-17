@@ -15,7 +15,7 @@ class SubwayActions:
 
         self.g = Gestures()
 
-        with open("configs/calibration.json") as f:
+        with open("assets/configs/calibration.json") as f:
             self.cfg = json.load(f)
 
     def _swipe(self, x2, y2):

@@ -11,7 +11,7 @@ class LanePicker:
 
         self.capture = ScreenCapture()
 
-        with open("configs/observation.json", "r") as f:
+        with open("assets/configs/observation.json", "r") as f:
             cfg = json.load(f)
 
         self.crop_x = cfg["crop_x"]
@@ -122,7 +122,7 @@ class LanePicker:
                 }
 
                 with open(
-                    "configs/lanes.json",
+                    "assets/configs/lanes.json",
                     "w",
                 ) as f:
 

@@ -63,7 +63,7 @@ def main():
         "crop_height": h,
     }
 
-    with open("configs/observation.json", "w") as f:
+    with open("assets/configs/observation.json", "w") as f:
         json.dump(config, f, indent=4)
 
     print("\nSaved Observation ROI:\n")

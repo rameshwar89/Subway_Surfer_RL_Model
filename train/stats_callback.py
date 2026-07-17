@@ -23,6 +23,10 @@ class SubwayStatsCallback(BaseCallback):
         self.game_overs = 0
         self.total_steps = 0
 
+        # Rolling mean for reward breakdown (so game-over steps don't zero out the stats)
+        self._reward_accum = {}
+        self._reward_accum_steps = 0
+
         # Action distribution
         self.action_counter = {
             0: 0,  # Left
@@ -226,12 +230,22 @@ class SubwayStatsCallback(BaseCallback):
 
         if reward_breakdown:
 
+            # Accumulate into rolling mean (skip non-numeric keys like terminal_strings)
             for key, value in reward_breakdown.items():
+                if not isinstance(value, (int, float)):
+                    continue
+                if key not in self._reward_accum:
+                    self._reward_accum[key] = 0.0
+                self._reward_accum[key] += value
+            self._reward_accum_steps += 1
 
-                self.logger.record(
-                    f"reward/{key}",
-                    value,
-                )
+            # Log the running mean
+            if self._reward_accum_steps > 0:
+                for key, total in self._reward_accum.items():
+                    self.logger.record(
+                        f"reward/{key}",
+                        total / self._reward_accum_steps,
+                    )
 
         # -------------------------------------------------
         # Environment state

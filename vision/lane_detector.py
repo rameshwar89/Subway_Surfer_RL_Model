@@ -11,87 +11,81 @@ class LaneDetector:
     RIGHT = 2
 
     def __init__(self):
-
-        with open("configs/lanes.json", "r") as f:
+        with open("assets/configs/lanes.json", "r") as f:
             cfg = json.load(f)
+            
+        self.perspectives = {}
+        for lane_idx, lines in cfg["perspectives"].items():
+            self.perspectives[int(lane_idx)] = {
+                "L_Left": np.array(lines.get("L_Left", []), dtype=np.float32),
+                "L_Right": np.array(lines.get("L_Right", []), dtype=np.float32),
+                "C_Left": np.array(lines.get("C_Left", []), dtype=np.float32),
+                "C_Right": np.array(lines.get("C_Right", []), dtype=np.float32),
+                "R_Left": np.array(lines.get("R_Left", []), dtype=np.float32),
+                "R_Right": np.array(lines.get("R_Right", []), dtype=np.float32)
+            }
+            
+    def _get_x_at_y(self, polyline, target_y):
+        """Piecewise linear interpolation along a curved polyline to find X for a given Y"""
+        if len(polyline) == 0:
+            return 0.0
+            
+        # Sort polyline by Y (top to bottom)
+        sorted_line = polyline[polyline[:, 1].argsort()]
+        
+        if target_y <= sorted_line[0, 1]:
+            return sorted_line[0, 0]
+        if target_y >= sorted_line[-1, 1]:
+            return sorted_line[-1, 0]
+            
+        for i in range(len(sorted_line) - 1):
+            p1, p2 = sorted_line[i], sorted_line[i+1]
+            if p1[1] <= target_y <= p2[1]:
+                if abs(p2[1] - p1[1]) < 1:
+                    return p1[0]
+                t = (target_y - p1[1]) / (p2[1] - p1[1])
+                return p1[0] + t * (p2[0] - p1[0])
+                
+        return sorted_line[0, 0]
 
-        self.left_top = np.array(cfg["left_top"], dtype=np.float32)
-        self.left_bottom = np.array(cfg["left_bottom"], dtype=np.float32)
+    def get_object_lane(self, center_x, center_y, agent_lane):
+        """Calculates which lane an object is in using the exact traced curves"""
+        p = self.perspectives.get(int(agent_lane), self.perspectives[1])
+        
+        # If the model hasn't been calibrated yet with 6 lines, fallback to center
+        if len(p["L_Right"]) == 0:
+            return 1
+            
+        l_right = self._get_x_at_y(p["L_Right"], center_y)
+        c_left = self._get_x_at_y(p["C_Left"], center_y)
+        c_right = self._get_x_at_y(p["C_Right"], center_y)
+        r_left = self._get_x_at_y(p["R_Left"], center_y)
+        
+        # Split the gap between the rails (if the user drew them in the middle, they overlap anyway)
+        left_center_divider = (l_right + c_left) / 2.0
+        center_right_divider = (c_right + r_left) / 2.0
+        
+        if center_x < left_center_divider:
+            return 0  # Left
+        elif center_x < center_right_divider:
+            return 1  # Center
+        else:
+            return 2  # Right
 
-        self.right_top = np.array(cfg["right_top"], dtype=np.float32)
-        self.right_bottom = np.array(cfg["right_bottom"], dtype=np.float32)
-
-    def _interpolate(self, p1, p2, y):
-
-        """
-        Returns x-coordinate of the line at a given y.
-        """
-
-        x1, y1 = p1
-        x2, y2 = p2
-
-        if abs(y2 - y1) < 1e-6:
-            return x1
-
-        t = (y - y1) / (y2 - y1)
-
-        return x1 + t * (x2 - x1)
-
-    def draw(self, frame):
-
-        h, w = frame.shape[:2]
-
-        # Draw outer lane boundaries
-        cv2.line(
-            frame,
-            tuple(self.left_top.astype(int)),
-            tuple(self.left_bottom.astype(int)),
-            (0, 255, 0),
-            2,
-        )
-
-        cv2.line(
-            frame,
-            tuple(self.right_top.astype(int)),
-            tuple(self.right_bottom.astype(int)),
-            (0, 255, 0),
-            2,
-        )
-
-        # Draw estimated center lane
-        for y in range(0, h, 8):
-
-            left_x = self._interpolate(
-                self.left_top,
-                self.left_bottom,
-                y,
-            )
-
-            right_x = self._interpolate(
-                self.right_top,
-                self.right_bottom,
-                y,
-            )
-
-            lane_width = (right_x - left_x) / 3.0
-
-            x1 = int(left_x + lane_width)
-            x2 = int(left_x + 2 * lane_width)
-
-            cv2.circle(
-                frame,
-                (x1, y),
-                1,
-                (255, 255, 0),
-                -1,
-            )
-
-            cv2.circle(
-                frame,
-                (x2, y),
-                1,
-                (255, 255, 0),
-                -1,
-            )
+    def draw(self, frame, agent_lane=1):
+        """Draws the precise curved polylines onto the frame for debugging"""
+        p = self.perspectives.get(int(agent_lane), self.perspectives[1])
+        if len(p["L_Right"]) == 0:
+            return frame
+            
+        colors = [(255, 0, 0), (0, 255, 0), (0, 255, 255), (0, 0, 255), (255, 255, 0), (255, 0, 255)]
+        lines = [p["L_Left"], p["L_Right"], p["C_Left"], p["C_Right"], p["R_Left"], p["R_Right"]]
+        
+        for idx, line_pts in enumerate(lines):
+            color = colors[idx]
+            for i in range(1, len(line_pts)):
+                p1 = tuple(line_pts[i-1].astype(int))
+                p2 = tuple(line_pts[i].astype(int))
+                cv2.line(frame, p1, p2, color, 3)
 
         return frame

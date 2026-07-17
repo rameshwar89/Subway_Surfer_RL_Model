@@ -13,7 +13,17 @@ logs/
 checkpoints/
 *.pth
 *.pt
+!yolo26n.pt
 recordings/
 videos/
 tools/
 .DS_Store
+docs/
+
+# Model checkpoints & training runs (keep locally, too large for git)
+models/
+best_model/*.zip
+runs/
+
+# Raw captured frames
+data/raw_frames/

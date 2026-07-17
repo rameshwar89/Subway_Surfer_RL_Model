@@ -1,7 +1,7 @@
 {
-    "best_score": -3.5677,
-    "best_reward": -3.5677,
-    "best_episode": 87,
+    "best_score": 256.52081,
+    "best_reward": 256.52081,
+    "best_episode": 348,
     "model_path": "best_model/best_model.zip",
-    "saved_at": "2026-07-07T00:19:28"
+    "saved_at": "2026-07-12T04:33:37"
 }

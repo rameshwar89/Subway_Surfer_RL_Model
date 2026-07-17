@@ -1,9 +1,16 @@
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
 import json
 from pathlib import Path
 from shutil import copyfile
 from datetime import datetime
 
 import torch
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
 from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv
@@ -21,16 +28,15 @@ from train.callbacks import get_callbacks
 # "final"      -> continue from models/subway_ppo_final.zip
 # "checkpoint" -> continue from CHECKPOINT_MODEL_PATH
 # "scratch"    -> create a new PPO model
-TRAIN_FROM = "checkpoint"
+TRAIN_FROM = "final"
 
 FINAL_MODEL_PATH = Path("models/subway_ppo_final.zip")
 BEST_MODEL_PATH = Path("best_model/best_model.zip")
 BEST_STATS_PATH = Path("best_model/best_stats.json")
-CHECKPOINT_MODEL_PATH = Path("models/experiments/Phase18_Scratch_100k_SpeedRun_20260705_210711_complete_130304_20260705_231209.zip")
+CHECKPOINT_MODEL_PATH = Path("best_model/best_20260708_000745.zip")  # Phase27 best
 
-RUN_TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
-EXPERIMENT_NAME = "Phase21_SpeedRun_Resume_100k_20260706_233252_1"
-TOTAL_TIMESTEPS = 35000
+EXPERIMENT_NAME = "Phase31_Phase27Style"
+TOTAL_TIMESTEPS = 250000
 SB3_VERBOSE = 1
 
 # --------------------------------------------------
@@ -118,7 +124,7 @@ if load_path is not None:
         device=device,
         ent_coef=0.01,
         n_steps=512,
-        batch_size=32,
+        batch_size=64,
     )
     model.verbose = SB3_VERBOSE
 
@@ -127,15 +133,14 @@ else:
     print("\nCreating New Model...\n")
 
     model = PPO(
-        policy="CnnPolicy",
-        env=env,
-        device=device,
+        "MlpPolicy",
+        env,
         verbose=SB3_VERBOSE,
         learning_rate=3e-4,
-        gamma=0.99,
         n_steps=512,
-        batch_size=32,
+        batch_size=64,
         n_epochs=10,
+        gamma=0.99,
         ent_coef=0.01,
         tensorboard_log="logs",
     )
@@ -155,6 +160,7 @@ try:
         ),
         tb_log_name=EXPERIMENT_NAME,
         reset_num_timesteps=True,
+        log_interval=1,
     )
 
 except KeyboardInterrupt:
