@@ -7,299 +7,375 @@ from vision.lane_detector import LaneDetector
 class LiveObservationDebugger:
 
     # Layout constants
-    CROP_W    = 400
-    STACK_W   = 600
+    CROP_W    = 390
+    STACK_W   = 610
     WINDOW_W  = CROP_W + STACK_W   # 1000
-    INFO_H    = 60
+    INFO_H    = 50
     CONTENT_H = 770
-    WINDOW_H  = CONTENT_H + INFO_H  # 830
+    WINDOW_H  = CONTENT_H + INFO_H  # 820
 
-    # BGR colors
-    BG        = (15, 15, 15)
-    PANEL_BG  = (22, 28, 22)
-    GREEN     = (80, 255, 60)
-    RED       = (60, 60, 240)
-    CYAN      = (210, 190, 0)
-    WHITE     = (245, 245, 245)
-    GRAY      = (155, 155, 155)
-    YELLOW    = (0, 210, 210)
+    # BGR colors — terminal-green aesthetic
+    PANEL_BG  = (14, 18, 14)
+    BORDER    = (0, 160, 80)
+    GREEN     = (60, 220, 60)
+    RED       = (50, 50, 220)
+    ORANGE    = (0, 140, 255)
+    CYAN      = (180, 210, 0)
+    WHITE     = (230, 230, 230)
+    GRAY      = (110, 110, 110)
+    YELLOW    = (0, 200, 200)
+    DIM       = (70, 90, 70)
+
+    # Section divider color
+    DIVIDER   = (0, 60, 30)
 
     ACTION_COLORS = {
-        "IDLE":  (140, 140, 140),
-        "LEFT":  (0, 190, 255),
-        "RIGHT": (0, 190, 255),
-        "JUMP":  (80, 255, 60),
-        "ROLL":  (200, 90, 255),
+        "IDLE":  (120, 120, 120),
+        "LEFT":  (30, 180, 255),
+        "RIGHT": (30, 180, 255),
+        "JUMP":  (60, 220, 60),
+        "ROLL":  (200, 80, 255),
     }
 
     ACTION_NAMES = {0: "LEFT", 1: "RIGHT", 2: "JUMP", 3: "ROLL", 4: "IDLE"}
 
+    # Obstacle type encoding -> (label, color)
+    TYPE_MAP = {
+        0.0: ("CLEAR",       (60, 220, 60)),
+        0.2: ("CLIMBER",     (60, 220, 60)),
+        0.3: ("BLOCKER",     (60, 180, 255)),   # Jump OR Roll
+        0.4: ("ROLL-BLOCK",  (200, 80, 255)),   # Jump only
+        0.6: ("JUMP-BAR",    (0, 140, 255)),    # Roll only
+        1.0: ("TRAIN",       (50, 50, 220)),    # Lane change
+    }
+
     # -------------------------------------------------------
 
-    def __init__(self):
+    def __init__(self, initial_episode=0):
 
         self.window = "RL Vision Studio"
         cv2.namedWindow(self.window, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(self.window, self.WINDOW_W, self.WINDOW_H)
         cv2.moveWindow(self.window, 40, 40)
 
-        self.action_history = deque(maxlen=16)
-        self.total_reward   = 0.0
-        self.best_episode   = 0
-        self.frame_counter  = 0
-        self.last_time      = cv2.getTickCount()
-        self.current_fps    = 0.0
-        
-        self.lane_detector  = LaneDetector()
+        # State tracking
+        self.action_history  = deque(maxlen=12)
+        self.total_reward    = 0.0
+        self.best_reward     = -1e9
+        self.best_steps      = 0
+        self.episode_num     = initial_episode
+
+        # Session-level stats for action distribution and episode trend
+        self.session_actions = {"LEFT": 0, "RIGHT": 0, "JUMP": 0, "ROLL": 0, "IDLE": 0}
+        self.episode_history = deque(maxlen=10)  # (steps, reward) per episode
+
+        # FPS tracking (update every N frames)
+        self.frame_counter   = 0
+        self.last_tick       = cv2.getTickCount()
+        self.current_fps     = 0.0
+
+        self.lane_detector   = LaneDetector()
+
+        # Pre-allocate panel buffers to avoid allocating every frame
+        self._crop_buf  = np.full((self.CONTENT_H, self.CROP_W, 3),  self.PANEL_BG, dtype=np.uint8)
+        self._stack_buf = np.full((self.CONTENT_H, self.STACK_W, 3), self.PANEL_BG, dtype=np.uint8)
+        self._bar_buf   = np.full((self.INFO_H,    self.WINDOW_W, 3), self.PANEL_BG, dtype=np.uint8)
 
     # -------------------------------------------------------
 
     def _update_fps(self):
-
         self.frame_counter += 1
-
-        if self.frame_counter < 5:
+        if self.frame_counter < 6:
             return
-
         now = cv2.getTickCount()
-        dt  = (now - self.last_time) / cv2.getTickFrequency()
-
+        dt  = (now - self.last_tick) / cv2.getTickFrequency()
         if dt > 0:
             self.current_fps = self.frame_counter / dt
-
         self.frame_counter = 0
-        self.last_time     = now
+        self.last_tick     = now
 
     # -------------------------------------------------------
 
-    def _crop_panel(self, crop, agent_lane_val):
-        """Left panel: gameplay crop displayed in color."""
+    def _label(self, img, text, x, y, scale=0.45, color=None, bold=False):
+        """Tiny helper to draw text with one call."""
+        color = color or self.WHITE
+        thickness = 2 if bold else 1
+        cv2.putText(img, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, scale, color, thickness, cv2.LINE_AA)
 
-        img = (
-            crop.copy()
-            if len(crop.shape) == 3
-            else cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
-        )
-        
-        # Determine int lane based on vector value (0.0=0, 0.5=1, 1.0=2)
-        if agent_lane_val < 0.25:
-            agent_lane = 0
-        elif agent_lane_val > 0.75:
-            agent_lane = 2
-        else:
-            agent_lane = 1
-            
-        # Draw dynamic perspective lane boundaries using the mathematically perfect detector
-        img = self.lane_detector.draw(img, agent_lane)
+    def _hline(self, img, y, w=None):
+        w = w or img.shape[1]
+        cv2.line(img, (8, y), (w - 8, y), self.DIVIDER, 1)
 
-        h, w   = img.shape[:2]
-        scale  = min(self.CROP_W / w, self.CONTENT_H / h)
-        nw, nh = int(w * scale), int(h * scale)
-        img    = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_AREA)
+    def _bar_rect(self, img, x, y, w, h, fill, bg=(40, 40, 40)):
+        """Draw a small progress bar."""
+        cv2.rectangle(img, (x, y), (x + w, y + h), bg, -1)
+        fw = max(0, min(w, int(fill * w)))
+        if fw > 0:
+            cv2.rectangle(img, (x, y), (x + fw, y + h), self._dist_color(fill), -1)
 
-        panel = np.full((self.CONTENT_H, self.CROP_W, 3), self.PANEL_BG, dtype=np.uint8)
+    def _dist_color(self, dist):
+        """Red when close (0), yellow mid (0.5), green far (1.0)."""
+        if dist < 0.35:
+            return (30, 30, 200)   # red
+        if dist < 0.60:
+            return (0, 200, 200)   # yellow
+        return (40, 200, 40)       # green
+
+    # -------------------------------------------------------
+    # LEFT PANEL — gameplay feed with lane overlay
+    # -------------------------------------------------------
+
+    def _crop_panel(self, crop, agent_lane_int):
+        """Resize and annotate the raw gameplay feed."""
+
+        img = crop.copy() if len(crop.shape) == 3 else cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
+        img = self.lane_detector.draw(img, agent_lane_int)
+
+        h, w  = img.shape[:2]
+        scale = min(self.CROP_W / w, self.CONTENT_H / h)
+        nw    = int(w * scale)
+        nh    = int(h * scale)
+        img   = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_AREA)
+
+        panel = self._crop_buf
+        panel[:] = self.PANEL_BG
         y0 = (self.CONTENT_H - nh) // 2
-        x0 = (self.CROP_W - nw) // 2
+        x0 = (self.CROP_W    - nw) // 2
         panel[y0:y0 + nh, x0:x0 + nw] = img
 
-        cv2.putText(panel, "GAMEPLAY CROP", (10, 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, self.CYAN, 1)
-        cv2.rectangle(panel, (1, 1), (self.CROP_W - 2, self.CONTENT_H - 2), self.CYAN, 1)
-
+        cv2.rectangle(panel, (1, 1), (self.CROP_W - 2, self.CONTENT_H - 2), self.BORDER, 1)
+        self._label(panel, "GAME FEED", 8, 18, 0.42, self.BORDER)
         return panel
 
     # -------------------------------------------------------
+    # RIGHT PANEL — state vector + metadata
+    # -------------------------------------------------------
 
-    def _stack_panel(self, stacked, state, action_name, reward, episode_steps, env_sps, reward_breakdown, detector_debug, on_train):
-        """Right panel: Renders the latest state vector and all metadata."""
-        
-        panel = np.full((self.CONTENT_H, self.STACK_W, 3), self.PANEL_BG, dtype=np.uint8)
-        cv2.putText(panel, "VECTOR STATE SPACE", (10, 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, self.CYAN, 1)
-        cv2.rectangle(panel, (1, 1), (self.STACK_W - 2, self.CONTENT_H - 2), self.CYAN, 1)
+    def _stack_panel(self, stacked, state, action_name, reward,
+                     episode_steps, env_sps, reward_breakdown,
+                     detector_debug, on_train):
 
-        if stacked is None or len(stacked.shape) == 0:
+        W  = self.STACK_W
+        panel = self._stack_buf
+        panel[:] = self.PANEL_BG
+        cv2.rectangle(panel, (1, 1), (W - 2, self.CONTENT_H - 2), self.BORDER, 1)
+
+        if stacked is None or stacked.size == 0:
             return panel
-            
-        # The vector is (32,) consisting of 4 frames of 8 features.
-        # We'll display the latest frame (the last 8 features)
-        latest_frame = stacked[-8:] if len(stacked.shape) == 1 else stacked[0, -8:]
-        
-        agent_lane = latest_frame[0]
-        distances = latest_frame[1:4]
-        types = latest_frame[4:7]
-        police_dist = latest_frame[7]
-        
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        
-        # 1. Agent Lane
-        lane_str = "LEFT" if agent_lane < 0.25 else "RIGHT" if agent_lane > 0.75 else "CENTER"
-        cv2.putText(panel, f"Agent Lane: {lane_str} ({agent_lane:.2f})", (15, 60), font, 0.6, self.WHITE, 1)
-        
-        # 2. Obstacles
-        cv2.putText(panel, "Obstacle Distances & Types:", (15, 100), font, 0.6, self.CYAN, 1)
-        
-        lanes = ["Left", "Center", "Right"]
+
+        # Decode state vector — latest frame is last 8 floats of (32,) flat array
+        vec         = stacked[-8:]
+        agent_lane  = vec[0]           # 0.0=L, 0.5=C, 1.0=R
+        distances   = vec[1:4]         # normalized 0-1, 1.0=far/clear
+        obs_types   = vec[4:7]         # semantic type codes
+        police      = vec[7]           # 1.0 = police present
+
+        lane_int = 0 if agent_lane < 0.25 else (2 if agent_lane > 0.75 else 1)
+        lane_str = ("LEFT", "CENTER", "RIGHT")[lane_int]
+
+        # ── Uniform type sizes ────────────────────────────────────
+        # All data text:    scale=0.48
+        # Section headers:  scale=0.46 bold + BORDER color
+        # Pill text:        scale=0.45 bold, dark bg
+        S  = 0.48   # standard data size
+        SH = 0.46   # section header size
+
+        y = 22
+
+        # ── SECTION: AGENT STATUS ────────────────────────────────
+        self._label(panel, "AGENT STATUS", 10, y, SH, self.BORDER, bold=True)
+        y += 24
+
+        # Lane pill
+        lane_color = (30, 180, 255) if lane_int != 1 else self.GREEN
+        cv2.rectangle(panel, (10, y - 14), (100, y + 4), lane_color, -1)
+        self._label(panel, lane_str, 14, y, 0.45, (10, 10, 10), bold=True)
+
+        # Action pill
+        a_col = self.ACTION_COLORS.get(action_name, self.WHITE)
+        cv2.rectangle(panel, (110, y - 14), (215, y + 4), a_col, -1)
+        self._label(panel, action_name, 114, y, 0.45, (10, 10, 10), bold=True)
+
+        # State pill
+        s_col = self.GREEN if state == "RUNNING" else self.RED
+        cv2.rectangle(panel, (225, y - 14), (380, y + 4), s_col, -1)
+        self._label(panel, state, 229, y, 0.45, (10, 10, 10), bold=True)
+
+        # On-train badge
+        if on_train:
+            cv2.rectangle(panel, (390, y - 14), (500, y + 4), self.ORANGE, -1)
+            self._label(panel, "ON TRAIN", 394, y, 0.45, (10, 10, 10), bold=True)
+
+        y += 28
+        self._hline(panel, y)
+        y += 14
+
+        # ── SECTION: OBSTACLES ────────────────────────────────────
+        self._label(panel, "OBSTACLES", 10, y, SH, self.BORDER, bold=True)
+        y += 24
+
+        # Fixed column grid
+        LANE_X = 10    # lane letter
+        DIST_X = 35    # distance value
+        BAR_X  = 95    # bar start
+        BAR_W  = 210   # bar width
+        TYPE_X = 315   # type label
+
         for i in range(3):
-            y = 130 + (i * 40)
-            dist = distances[i]
-            obj_type = types[i]
-            
-            # Map type back to string for UI
-            if obj_type == 0.0:
-                t_str = "Clear"
-                t_color = self.GREEN
-            elif obj_type == 0.2:
-                t_str = "[Climb / Idle]"
-                t_color = self.GREEN
-            elif obj_type == 0.4:
-                t_str = "[JUMP Required]"
-                t_color = (255, 100, 255) # Pink
-            elif obj_type == 0.6:
-                t_str = "[ROLL Required]"
-                t_color = (0, 165, 255) # Orange
-            elif obj_type == 1.0:
-                t_str = "[LANE CHANGE]"
-                t_color = (50, 50, 255) # Red
-            else:
-                t_str = f"Unknown ({obj_type:.2f})"
-                t_color = self.GRAY
-                
-            # Draw text
-            text = f"{lanes[i]}: {dist:.2f} [{t_str}]"
-            cv2.putText(panel, text, (15, y), font, 0.5, t_color, 1)
-            
-            # Draw bar
-            bar_w = 150
-            bar_x = 220
-            # Distance 1.0 = clear (far), 0.0 = close
-            fill_w = int(dist * bar_w)
-            # Red when close, Green when far
-            bar_color = (0, 0, 255) if dist < 0.3 else (0, 255, 255) if dist < 0.6 else (0, 255, 0)
-            
-            cv2.rectangle(panel, (bar_x, y - 12), (bar_x + bar_w, y + 2), (50, 50, 50), -1)
-            cv2.rectangle(panel, (bar_x, y - 12), (bar_x + fill_w, y + 2), bar_color, -1)
-            
-        # 3. Police Present & Climbed
-        cv2.putText(panel, "Police Present:", (15, 270), font, 0.6, self.CYAN, 1)
-        p_str = "YES" if police_dist == 1.0 else "NO"
-        p_color = self.RED if police_dist == 1.0 else self.GREEN
-        cv2.putText(panel, p_str, (15, 300), font, 0.6, p_color, 1)
-        
-        cv2.putText(panel, "Climbed (On Train):", (250, 270), font, 0.6, self.CYAN, 1)
-        c_str = "YES" if on_train else "NO"
-        c_color = self.GREEN if on_train else self.GRAY
-        cv2.putText(panel, c_str, (250, 300), font, 0.6, c_color, 1)
-        
-        # -----------------------------------------------------------
-        # 4. METADATA (Moved from bottom bar)
-        # -----------------------------------------------------------
-        sc = 0.5
-        y = 350
-        
-        state_color  = self.GREEN if state == "RUNNING" else self.RED
-        action_color = self.ACTION_COLORS.get(action_name, self.WHITE)
+            dist  = float(distances[i])
+            otype = float(obs_types[i])
+            t_label, t_col = self.TYPE_MAP.get(
+                min(self.TYPE_MAP.keys(), key=lambda k: abs(k - otype)),
+                (f"{otype:.1f}", self.GRAY)
+            )
+            is_agent = (i == lane_int)
+            lbl_col  = self.YELLOW if is_agent else self.WHITE
 
-        # Row 1: State & Action
-        cv2.putText(panel, f"STATE: {state}", (15, y), font, sc, state_color, 1)
-        cv2.putText(panel, f"ACTION: {action_name}", (250, y), font, sc, action_color, 1)
-        
-        y += 35
-        # Row 2: Steps
-        cv2.putText(panel, f"STEPS: {episode_steps}", (15, y), font, sc, self.WHITE, 1)
-        cv2.putText(panel, f"BEST EPISODE: {self.best_episode}", (250, y), font, sc, self.GRAY, 1)
+            self._label(panel, ("L", "C", "R")[i], LANE_X, y, S, lbl_col, bold=is_agent)
+            self._label(panel, f"{dist:.2f}",       DIST_X, y, S, self._dist_color(dist))
+            self._bar_rect(panel, BAR_X, y - 13, BAR_W, 15, dist)
+            self._label(panel, t_label,             TYPE_X, y, S, t_col)
+            y += 26
 
-        y += 35
-        # Row 3: Performance
-        cv2.putText(panel, f"SPS: {env_sps:.1f}", (15, y), font, sc, self.WHITE, 1)
-        cv2.putText(panel, f"FPS: {self.current_fps:.1f}", (250, y), font, sc, self.WHITE, 1)
+        y += 2
+        self._hline(panel, y)
+        y += 14
 
-        y += 35
-        # Row 4: Rewards
-        cv2.putText(panel, f"STEP REWARD: {reward:+.3f}", (15, y), font, sc, self.YELLOW, 1)
-        cv2.putText(panel, f"EPISODE REWARD: {self.total_reward:.2f}", (250, y), font, sc, self.YELLOW, 1)
+        # ── SECTION: EPISODE STATS ────────────────────────────────
+        self._label(panel, "EPISODE STATS", 10, y, SH, self.BORDER, bold=True)
+        y += 24
 
-        y += 45
-        # Row 5: Reward Breakdown
+        # Three-column row — uniform size
+        C1, C2, C3 = 10, 175, 380
+        self._label(panel, f"EP #{self.episode_num}",   C1, y, S, self.WHITE, bold=True)
+        self._label(panel, f"STEPS   {episode_steps}",  C2, y, S, self.WHITE)
+        self._label(panel, f"BEST   {self.best_steps}", C3, y, S, self.GRAY)
+        y += 26
+
+        if self.episode_history:
+            n           = len(self.episode_history)
+            mean_steps  = sum(e[0] for e in self.episode_history) / n
+            mean_reward = sum(e[1] for e in self.episode_history) / n
+            self._label(panel, f"AVG ({n} ep)",         C1, y, S, self.CYAN)
+            self._label(panel, f"steps {mean_steps:.0f}", C2, y, S, self.WHITE)
+            self._label(panel, f"rew {mean_reward:+.1f}", C3, y, S, self.YELLOW)
+            y += 26
+
+        self._label(panel, f"SPS {env_sps:.1f}",     C2,  y, S, self.WHITE)
+        self._label(panel, f"FPS {self.current_fps:.1f}", C3, y, S, self.WHITE)
+        y += 24
+
+        self._hline(panel, y)
+        y += 14
+
+        # ── SECTION: ACTION DISTRIBUTION ─────────────────────────
+        self._label(panel, "ACTION DISTRIBUTION", 10, y, SH, self.BORDER, bold=True)
+        y += 24
+
+        total_acts = max(1, sum(self.session_actions.values()))
+        act_order  = [("LEFT",  (30, 180, 255)),
+                      ("RIGHT", (30, 180, 255)),
+                      ("JUMP",  (60, 220, 60)),
+                      ("ROLL",  (200, 80, 255)),
+                      ("IDLE",  (140, 140, 140))]
+
+        ABAR_X = 90          # enough room for "RIGHT" at scale 0.48
+        ABAR_W = W - ABAR_X - 65
+        PCT_X  = ABAR_X + ABAR_W + 8
+
+        for name, col in act_order:
+            pct = self.session_actions[name] / total_acts
+            self._label(panel, name, 10, y, S, col)
+            cv2.rectangle(panel, (ABAR_X, y - 13), (ABAR_X + ABAR_W, y + 4), (35, 35, 35), -1)
+            fw = max(0, int(pct * ABAR_W))
+            if fw > 0:
+                cv2.rectangle(panel, (ABAR_X, y - 13), (ABAR_X + fw, y + 4), col, -1)
+            self._label(panel, f"{pct*100:.0f}%", PCT_X, y, S, self.WHITE)
+            y += 22
+
+        y += 6
+        self._hline(panel, y)
+        y += 14
+
+        # ── SECTION: REWARDS ─────────────────────────────────────
+        self._label(panel, "REWARDS", 10, y, SH, self.BORDER, bold=True)
+        y += 24
+
+        r_col = self.GREEN if reward > 0 else (self.RED if reward < -1 else self.YELLOW)
+        self._label(panel, f"STEP  {reward:+.3f}",               C1,  y, S, r_col, bold=True)
+        self._label(panel, f"EP TOTAL  {self.total_reward:+.2f}", C2,  y, S, self.YELLOW)
+        self._label(panel, f"BEST  {self.best_reward:+.1f}",      C3,  y, S, self.GRAY)
+        y += 26
+
         if reward_breakdown:
-            cv2.putText(panel, "REWARD BREAKDOWN:", (15, y), font, sc, self.CYAN, 1)
-            y += 25
-            
-            x_offset = 15
-            for k, v in reward_breakdown.items():
-                if k == "terminal_strings":
-                    continue
-                if abs(v) > 1e-6:
-                    text  = f"{k}: {v:+.3f} "
-                    color = self.GREEN if v > 0 else self.RED
-                    cv2.putText(panel, text, (x_offset, y), font, 0.45, color, 1)
-                    (tw, _), _ = cv2.getTextSize(text, font, 0.45, 1)
-                    x_offset += tw + 15
-                    if x_offset > self.STACK_W - 150:
-                        x_offset = 15
-                        y += 25
+            items = [(k, v) for k, v in reward_breakdown.items()
+                     if isinstance(v, (int, float)) and abs(v) > 1e-6]
+            col_w = (W - 20) // 2
+            cx    = [10, 10 + col_w]
+            col   = 0
+            for k, v in items:
+                v_col   = self.GREEN if v > 0 else self.RED
+                short_k = k.replace("_", " ")
+                self._label(panel, f"{short_k}: {v:+.3f}", cx[col], y, S, v_col)
+                col += 1
+                if col > 1:
+                    col = 0
+                    y  += 22
+            if col == 1:
+                y += 22
 
-        y += 45
-        # Row 6: Detectors
-        cv2.putText(panel, "DETECTORS:", (15, y), font, sc, self.CYAN, 1)
-        y += 25
+        y += 6
+        self._hline(panel, y)
+        y += 14
+
+        # ── SECTION: DETECTORS ───────────────────────────────────
+        self._label(panel, "DETECTORS", 10, y, SH, self.BORDER, bold=True)
+        y += 24
+
         if detector_debug:
             total_ms = 0.0
-            x_offset = 15
             for det_name, data in detector_debug.items():
-                ms = data.get("detect_ms", 0.0)
+                ms      = data.get("detect_ms", 0.0)
                 matched = data.get("matched", False)
-                if ms > 0.0 or matched:
-                    total_ms += ms
-                    if det_name == "pause_button":
-                        color = self.GREEN if matched else self.RED
-                        status_str = "MATCH" if matched else f"MISSING ({ms:.1f}ms)"
-                    else:
-                        color = self.RED if matched else self.GREEN
-                        status_str = "MATCH" if matched else f"{ms:.1f}ms"
-                        
-                    text = f"{det_name.upper()}: {status_str}"
-                    cv2.putText(panel, text, (x_offset, y), font, 0.42, color, 1)
-                    (tw, _), _ = cv2.getTextSize(text, font, 0.42, 1)
-                    x_offset += tw + 15
-                    if x_offset > self.STACK_W - 150:
-                        x_offset = 15
-                        y += 25
-                        
-            y += 25
-            cv2.putText(panel, f"TOTAL DETECT TIME: {total_ms:.1f}ms", (15, y), font, sc, self.CYAN, 1)
+                total_ms += ms
+                if det_name == "pause_button":
+                    col    = self.GREEN if matched else self.RED
+                    status = "OK" if matched else f"MISS {ms:.1f}ms"
+                else:
+                    col    = self.RED if matched else self.GREEN
+                    status = "MATCH" if matched else f"{ms:.0f}ms"
+                tag = f"{det_name.replace('_', ' ').upper()}: {status}"
+                self._label(panel, tag, 10, y, S, col)
+                y += 22
+
+            self._label(panel, f"TOTAL DETECT TIME: {total_ms:.1f}ms", 10, y, S, self.CYAN)
 
         return panel
 
     # -------------------------------------------------------
+    # BOTTOM BAR — action history ticker
+    # -------------------------------------------------------
 
-    def _info_bar(self, reward_breakdown):
-        """Bottom info bar dedicated to history to prevent overflow."""
+    def _info_bar(self):
+        W   = self.WINDOW_W
+        bar = self._bar_buf
+        bar[:] = self.PANEL_BG
+        cv2.line(bar, (0, 0), (W, 0), self.BORDER, 1)
 
-        bar  = np.full((self.INFO_H, self.WINDOW_W, 3), (18, 22, 18), dtype=np.uint8)
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        sc   = 0.45
-
-        cv2.line(bar, (0, 0), (self.WINDOW_W, 0), self.CYAN, 1)
-
-        # Action History
-        hist_list = list(self.action_history)
-        history_1 = "  \u2192  ".join(hist_list[:8])
-        cv2.putText(bar, f"HISTORY: {history_1}", (12, 22), font, 0.45, (170, 210, 170), 1)
-
-        history_2 = "  \u2192  ".join(hist_list[8:]) if len(hist_list) > 8 else ""
-        if history_2:
-            cv2.putText(bar, f"         {history_2}", (12, 44), font, 0.45, (170, 210, 170), 1)
-
-        # Terminal Penalty Breakdown (Only visible if dead)
-        if reward_breakdown and "terminal_strings" in reward_breakdown:
-            penalty_str = " | ".join(reward_breakdown["terminal_strings"])
-            cv2.putText(bar, f"DEATH PENALTY: {penalty_str}", (12, 44 if not history_2 else 60), font, 0.42, self.RED, 1)
+        # Show last 10 actions, most recent on the right
+        hist = list(self.action_history)[-10:]
+        # Compact: "L(+0.20) -> R(-10.00)"
+        items = []
+        for h in hist:
+            # strip the reward to save space if it's common survival
+            items.append(h)
+        text = "  |  ".join(items)
+        self._label(bar, f"HISTORY  {text}", 10, 30, 0.40, self.DIM)
 
         return bar
 
     # -------------------------------------------------------
-    # Main entry — called once per completed PPO action
+    # MAIN ENTRY
     # -------------------------------------------------------
 
     def show(
@@ -320,44 +396,51 @@ class LiveObservationDebugger:
 
         action_name = self.ACTION_NAMES.get(int(action), str(action))
 
-        # Episode stats
+        # Track episode stats
         if state == "RUNNING":
             self.total_reward += reward
         elif state == "GAME_OVER":
-            self.best_episode = max(self.best_episode, episode_steps)
+            # Latch bests and log into rolling history before reset
+            self.best_steps  = max(self.best_steps, episode_steps)
+            ep_total = self.total_reward + reward
+            self.best_reward = max(self.best_reward, ep_total)
+            self.episode_history.append((episode_steps, ep_total))
+            self.episode_num += 1
             self.total_reward = 0.0
 
-        # Action history — Log every single PPO step exactly, along with its reward
-        history_str = f"{action_name} ({reward:+.2f})"
+        # Track session action distribution
+        if action_name in self.session_actions:
+            self.session_actions[action_name] += 1
+
+        # Action history — compact label
+        a_short = {"LEFT": "L", "RIGHT": "R", "JUMP": "J", "ROLL": "Ro", "IDLE": "I"}.get(action_name, action_name)
+        history_str = f"{a_short}({reward:+.2f})"
         self.action_history.append(history_str)
 
-        # Extract agent lane for dynamic boundary drawing
+        # Agent lane integer
         agent_lane_val = 0.5
-        if stacked is not None and len(stacked.shape) > 0:
-            latest_frame = stacked[-8:] if len(stacked.shape) == 1 else stacked[0, -8:]
-            agent_lane_val = latest_frame[0]
+        if stacked is not None and stacked.size > 0:
+            agent_lane_val = float(stacked[-8])
+        lane_int = 0 if agent_lane_val < 0.25 else (2 if agent_lane_val > 0.75 else 1)
 
         # Build panels
-        crop_panel  = self._crop_panel(crop, agent_lane_val)
+        crop_panel  = self._crop_panel(crop, lane_int)
         stack_panel = self._stack_panel(
-            stacked, state, action_name, reward, episode_steps, 
+            stacked, state, action_name, reward, episode_steps,
             env_sps, reward_breakdown, detector_debug, on_train
         )
-        info_bar    = self._info_bar(reward_breakdown)
+        info_bar    = self._info_bar()
 
         content   = np.hstack((crop_panel, stack_panel))
         dashboard = np.vstack((content, info_bar))
 
-        # Game over flash
+        # Game Over flash overlay
         if state == "GAME_OVER":
-            overlay = dashboard.copy()
-            cv2.rectangle(overlay, (0, 0), (self.WINDOW_W, 55), (25, 25, 160), -1)
-            cv2.addWeighted(overlay, 0.55, dashboard, 0.45, 0, dashboard)
-            cv2.putText(
-                dashboard, "GAME OVER",
-                (self.WINDOW_W // 2 - 125, 42),
-                cv2.FONT_HERSHEY_SIMPLEX, 1.5, self.WHITE, 3,
-            )
+            overlay = dashboard[:50, :].copy()
+            cv2.rectangle(overlay, (0, 0), (self.WINDOW_W, 50), (20, 20, 140), -1)
+            cv2.addWeighted(overlay, 0.65, dashboard[:50, :], 0.35, 0, dashboard[:50, :])
+            self._label(dashboard, f"GAME OVER   EP #{self.episode_num}   STEPS {episode_steps}",
+                        self.WINDOW_W // 2 - 220, 34, 0.85, self.WHITE, bold=True)
 
         cv2.imshow(self.window, dashboard)
         key = cv2.waitKey(1) & 0xFF
@@ -372,7 +455,6 @@ class LiveObservationDebugger:
     # -------------------------------------------------------
 
     def close(self):
-
         try:
             cv2.destroyWindow(self.window)
         except Exception:

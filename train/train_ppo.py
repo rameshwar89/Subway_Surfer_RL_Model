@@ -28,16 +28,19 @@ from train.callbacks import get_callbacks
 # "final"      -> continue from models/subway_ppo_final.zip
 # "checkpoint" -> continue from CHECKPOINT_MODEL_PATH
 # "scratch"    -> create a new PPO model
-TRAIN_FROM = "final"
+TRAIN_FROM = "scratch"
 
 FINAL_MODEL_PATH = Path("models/subway_ppo_final.zip")
 BEST_MODEL_PATH = Path("best_model/best_model.zip")
 BEST_STATS_PATH = Path("best_model/best_stats.json")
 CHECKPOINT_MODEL_PATH = Path("best_model/best_20260708_000745.zip")  # Phase27 best
 
-EXPERIMENT_NAME = "Phase31_Phase27Style"
-TOTAL_TIMESTEPS = 250000
-SB3_VERBOSE = 1
+EXPERIMENT_NAME = "Phase31_2_1"
+TOTAL_TIMESTEPS = 100000
+SB3_VERBOSE = 0
+
+INITIAL_EPISODE = 0  # <--- Change this to whatever the debug menu says when you stop
+EXACT_TENSORBOARD_LOG = None  # Set to None to create a new log folder
 
 # --------------------------------------------------
 # Create folders
@@ -46,7 +49,6 @@ SB3_VERBOSE = 1
 Path("models").mkdir(exist_ok=True)
 Path("logs").mkdir(exist_ok=True)
 Path("best_model").mkdir(exist_ok=True)
-Path("eval_logs").mkdir(exist_ok=True)
 
 
 # --------------------------------------------------
@@ -54,7 +56,7 @@ Path("eval_logs").mkdir(exist_ok=True)
 # --------------------------------------------------
 
 def make_env():
-    return Monitor(SubwayEnv())
+    return Monitor(SubwayEnv(initial_episode=INITIAL_EPISODE))
 
 
 env = DummyVecEnv([make_env])
@@ -64,12 +66,11 @@ env = DummyVecEnv([make_env])
 # Device
 # --------------------------------------------------
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
+# Force PPO to CPU (YOLO still runs on CUDA)
+# This prevents the SB3 warning and is faster for small MlpPolicy networks
+device = "cpu"
 
-print(f"\nUsing device: {device}")
-
-if device == "cuda":
-    print(torch.cuda.get_device_name(0))
+print(f"\nUsing device for PPO: {device}")
 
 
 # --------------------------------------------------
@@ -136,6 +137,7 @@ else:
         "MlpPolicy",
         env,
         verbose=SB3_VERBOSE,
+        device=device,
         learning_rate=3e-4,
         n_steps=512,
         batch_size=64,
@@ -152,6 +154,11 @@ else:
 
 interrupted = False
 
+if EXACT_TENSORBOARD_LOG:
+    from stable_baselines3.common.logger import configure
+    new_logger = configure(EXACT_TENSORBOARD_LOG, ["stdout", "tensorboard"])
+    model.set_logger(new_logger)
+    
 try:
     model.learn(
         total_timesteps=TOTAL_TIMESTEPS,
@@ -159,7 +166,7 @@ try:
             initial_best_score=read_initial_best_score(),
         ),
         tb_log_name=EXPERIMENT_NAME,
-        reset_num_timesteps=True,
+        reset_num_timesteps=False,
         log_interval=1,
     )
 

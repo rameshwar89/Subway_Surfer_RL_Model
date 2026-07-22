@@ -4,15 +4,14 @@ class RewardSystem:
 
     SURVIVAL_REWARD      = 0.2
     GAME_OVER_PENALTY    = -10.0
-    STUMBLE_PENALTY      = 0.0   # on hold
-    INVALID_MOVE_PENALTY = -1.0
+    INVALID_MOVE_PENALTY = -0.2
 
     # Barrier technique rewards
     CORRECT_ACTION_REWARD = 1.5
     WRONG_ACTION_PENALTY  = -1.0
 
-    # Train dodge reward — only when train is in the sweet spot (0.55–0.65)
-    TRAIN_DODGE_REWARD = 1.5
+    # Train/Barrier dodge reward
+    LANE_CHANGE_EVADE_REWARD = 1.5
 
     # Idle bonus when lane is clear
     IDLE_CLEAR_REWARD = 0.1
@@ -50,13 +49,6 @@ class RewardSystem:
             return self.GAME_OVER_PENALTY, breakdown
 
         reward = self.SURVIVAL_REWARD
-
-        # -------------------------------------------------------------------
-        # STUMBLE
-        # -------------------------------------------------------------------
-        if stumbled:
-            reward += self.STUMBLE_PENALTY
-            breakdown["stumble_pen"] = self.STUMBLE_PENALTY
 
         # -------------------------------------------------------------------
         # INVALID MOVE — hit boundary wall
@@ -111,19 +103,31 @@ class RewardSystem:
                     breakdown["action_reaction"] += self.WRONG_ACTION_PENALTY
 
         # -------------------------------------------------------------------
-        # TRAIN DODGE REWARD
+        # LANE CHANGE EVASION REWARD
         # LEFT or RIGHT rewarded ONLY when:
-        #   - There is a solid train (type 1.0) in the current lane
-        #   - It is within the sweet spot: 0.55 <= distance <= 0.65
-        #   - The agent actually succeeded in changing lane
-        # Outside this window, L/R get no bonus and no penalty.
+        #   - There is an obstacle (train or barrier) in the previous lane (type != 0.0)
+        #   - The new lane is safer (either completely clear, or the obstacle is significantly further away)
+        #   - It is within the actionable window: 0.35 <= distance <= 0.85
         # -------------------------------------------------------------------
+        new_lane_safer = (current_lane_type == 0.0) or (current_lane_distance > previous_lane_distance + 0.15)
+        
         if (action in (SubwayActions.LEFT, SubwayActions.RIGHT)
-                and previous_lane_type == 1.0
-                and 0.55 <= previous_lane_distance <= 0.65
+                and previous_lane_type != 0.0
+                and new_lane_safer
+                and 0.35 <= previous_lane_distance <= 0.85
                 and agent_lane != new_agent_lane):
-            reward += self.TRAIN_DODGE_REWARD
-            breakdown["action_reaction"] += self.TRAIN_DODGE_REWARD
+            reward += self.LANE_CHANGE_EVADE_REWARD
+            breakdown["action_reaction"] += self.LANE_CHANGE_EVADE_REWARD
+
+        # -------------------------------------------------------------------
+        # FATAL ACTION PENALTY — JUMP/ROLL into a solid train
+        # -------------------------------------------------------------------
+        if (action in (SubwayActions.JUMP, SubwayActions.ROLL)
+                and previous_lane_type == 1.0
+                and previous_lane_distance <= 0.85
+                and not on_train):
+            reward += self.WRONG_ACTION_PENALTY
+            breakdown["action_reaction"] += self.WRONG_ACTION_PENALTY
 
         # -------------------------------------------------------------------
         # UNNECESSARY ACTION — JUMP/ROLL on a completely clear lane

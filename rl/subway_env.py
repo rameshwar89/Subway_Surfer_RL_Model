@@ -17,7 +17,7 @@ from vision.lane_detector import LaneDetector
 
 PROFILE_ENV = False
 DEBUG_OBSERVATION = True
-STEP_DELAY = 0.05
+STEP_DELAY = 0.20
 WARMUP_FRAMES = 4
 STARTUP_IGNORE_ACTIONS = 5
 PROFILE_INTERVAL = 100
@@ -26,11 +26,13 @@ RESET_TAP_DELAY = 0.10
 MACRO_POST_TAP_DELAY = 0.25
 RESET_STATE_TIMEOUT = 3.0
 
+# Stumble detection tuning (removed)
+
 
 
 class SubwayEnv(gym.Env):
 
-    def __init__(self):
+    def __init__(self, initial_episode=0):
 
         super().__init__()
 
@@ -45,7 +47,7 @@ class SubwayEnv(gym.Env):
         self.current_agent_lane = 1 # Start in center lane
 
         if DEBUG_OBSERVATION:
-            self.live_debugger = LiveObservationDebugger()
+            self.live_debugger = LiveObservationDebugger(initial_episode)
         self.reward_system = RewardSystem()
         self.last_action_times = {}
         self.episode_steps = 0
@@ -53,6 +55,12 @@ class SubwayEnv(gym.Env):
         self.on_train = False
         self.on_train_steps = 0
         self.total_env_steps = 0
+
+        # Stumble detection state
+        self.stumble_immunity   = 0   # Countdown: no stumble detection while > 0
+        self.stumble_window     = 0   # Countdown: stumble valid while > 0 (after lane action)
+        self.stumble_revert_to  = 1   # Lane to restore if stumble confirmed
+        self.police_consecutive = 0   # Consecutive frames police has been present
 
         # ---------------------------------
         # Action Cooldowns (seconds).
@@ -160,7 +168,7 @@ class SubwayEnv(gym.Env):
         self.profile["process"] += time.perf_counter() - t
         self.profile["total"] += time.perf_counter() - step_start
 
-        if DEBUG_OBSERVATION and self.total_env_steps <= 1000:
+        if DEBUG_OBSERVATION:
 
             annotated_frame = self.tracker.last_results[0].plot() if hasattr(self.tracker, 'last_results') and self.tracker.last_results else frame
             self.live_debugger.show(
@@ -228,9 +236,6 @@ class SubwayEnv(gym.Env):
         active_weights = weights[-len(self.action_history):] if self.action_history else []
 
         breakdown_strs = []
-        
-        if self.action_history:
-            print("\n========== DEATH PENALTY DISTRIBUTION ==========")
             
         for i, action in enumerate(self.action_history):
             action_names_map = {0: "LEFT", 1: "RIGHT", 2: "JUMP", 3: "ROLL", 4: "IDLE"}
@@ -241,12 +246,6 @@ class SubwayEnv(gym.Env):
             penalty += step_pen
             break_str = f"t-{len(self.action_history) - i - 1}: {action_name}({step_pen:+.2f})"
             breakdown_strs.append(break_str)
-            print(f"{break_str} -> (Weight: {active_weights[i]:.1f})")
-
-        if self.action_history:
-            print(f"------------------------------------------------")
-            print(f"TOTAL TERMINAL PENALTY: {penalty:+.2f}")
-            print("================================================\n")
 
         return penalty, breakdown_strs
 
@@ -313,7 +312,6 @@ class SubwayEnv(gym.Env):
         self.episode_steps = 0
         self.detector.reset_episode()
         self.last_action_times.clear()
-        self.prev_police_present = 1.0 # Assume police is present at the start of the run
         self.on_train = False
         self.on_train_steps = 0
 
@@ -356,10 +354,6 @@ class SubwayEnv(gym.Env):
 
     def step(self, action):
         self.total_env_steps += 1
-        
-        # Auto-close debugger window after 1000 steps
-        if self.total_env_steps == 1001 and hasattr(self, 'live_debugger'):
-            self.live_debugger.close()
             
         step_start = time.perf_counter()
         now = time.perf_counter()
@@ -388,10 +382,6 @@ class SubwayEnv(gym.Env):
         self.action_history.append(action)
         self.profile["action"] += time.perf_counter() - t
         
-        # Hard cooldown for lane changes to stabilize PPO observation
-        if action in (SubwayActions.LEFT, SubwayActions.RIGHT):
-            time.sleep(0.35)
-
         # Grab a single frame for the transition
         t = time.perf_counter()
         frame = self.capture.grab()
@@ -402,18 +392,12 @@ class SubwayEnv(gym.Env):
         state, _, _ = self.detector.detect(frame, context="gameplay")
         self.profile["detect"] += time.perf_counter() - t
 
+        police_present = 0.0
+
         # Track entities
         t = time.perf_counter()
         tracked_entities = self.tracker.track_frame(frame)
-        
-        # Determine police presence to check if a lane change failed due to a stumble (side-swiping a train)
-        police_present = 0.0
-        for ent in tracked_entities:
-            cls_name = self.tracker.model.names[ent["class"]]
-            if cls_name == "police":
-                police_present = 1.0
-                break
-                
+
         # Check if we climbed a ramp train (climber) in our lane
         y_max = frame.shape[0]
         for ent in tracked_entities:
@@ -424,14 +408,7 @@ class SubwayEnv(gym.Env):
                     norm_dist = max(0.0, min(1.0, (y_max - ent["center_y"]) / y_max))
                     if norm_dist <= 0.35:
                         self.on_train = True
-                        self.on_train_steps = 25 # 2.5 seconds of roof time
-                    
-        stumbled = (police_present == 1.0) and (self.prev_police_present == 0.0)
-        self.prev_police_present = police_present
-        
-        # If the agent stumbled while changing lanes, the lane change failed! Revert the desynchronized lane.
-        if stumbled and action in (SubwayActions.LEFT, SubwayActions.RIGHT):
-            self.current_agent_lane = previous_agent_lane
+                        self.on_train_steps = 25  # 2.5 seconds of roof time
 
         # Process frame and append to observation history using the correct lane perspective
         vector = self.vector_builder.build_vector(tracked_entities, self.current_agent_lane, frame.shape, self.tracker.model.names)
@@ -496,8 +473,8 @@ class SubwayEnv(gym.Env):
                 state=state,
                 action=action,
                 episode_steps=self.episode_steps,
-                police_present=police_present,
-                stumbled=stumbled,
+                police_present=False,
+                stumbled=False,
                 agent_lane=previous_agent_lane,
                 new_agent_lane=self.current_agent_lane,
                 current_lane_distance=current_lane_dist,
@@ -525,12 +502,10 @@ class SubwayEnv(gym.Env):
                 self.on_train_steps = 0
 
             # Enforce STEP_DELAY to prevent executing actions faster than the game runs
-            # We skip this for LEFT/RIGHT because they already have a hard 0.35s sleep block earlier.
-            if action not in (SubwayActions.LEFT, SubwayActions.RIGHT):
-                elapsed = time.perf_counter() - step_start
-                sleep_time = max(0, STEP_DELAY - elapsed)
-                time.sleep(sleep_time)
-                self.profile["sleep"] += sleep_time
+            elapsed = time.perf_counter() - step_start
+            sleep_time = max(0, STEP_DELAY - elapsed)
+            time.sleep(sleep_time)
+            self.profile["sleep"] += sleep_time
 
             return self._build_transition(
                 frame=frame,
